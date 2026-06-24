@@ -128,16 +128,23 @@ export default function Fixtures() {
     };
   }, [load, user.id]);
 
-  // ── Predict ──────────────────────────────────────────────────────────────
-  async function handlePredict(fixtureId, outcome) {
+  // ── Predict (UPDATED FOR EXACT SCORE CONFIGURATION) ──────────────────────
+  async function handlePredict(fixtureId, homeScore, awayScore, outcome) {
     const { data, error: upsertErr } = await supabase
       .from("predictions")
       .upsert(
-        { user_id: user.id, fixture_id: fixtureId, predicted_outcome: outcome },
+        { 
+          user_id: user.id, 
+          fixture_id: fixtureId, 
+          predicted_home_score: homeScore, 
+          predicted_away_score: awayScore, 
+          predicted_outcome: outcome 
+        },
         { onConflict: "user_id,fixture_id" }
       )
       .select()
       .single();
+
     if (upsertErr) throw upsertErr;
     setPredictions((prev) => ({ ...prev, [fixtureId]: data }));
   }
@@ -167,7 +174,7 @@ export default function Fixtures() {
       <div className="flex-between page-header">
         <div>
           <h1>Fixtures</h1>
-          <p>Predict before kickoff · Locks automatically · Live scores update instantly</p>
+          <p>Predict exact scores before kickoff · Locks automatically · Live values update instantly</p>
         </div>
         {lastSync && (
           <div className="muted" style={{ fontSize: "0.75rem", textAlign: "right" }}>
