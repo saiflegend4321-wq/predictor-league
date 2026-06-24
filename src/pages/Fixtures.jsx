@@ -1,248 +1,314 @@
-import { useEffect, useState, useCallback, useRef } from "react";
-import { supabase } from "../lib/supabaseClient";
-import { useAuth } from "../context/AuthContext";
-import FixtureCard from "../components/FixtureCard";
+import { useState, useEffect, useMemo } from "react";
 
-const TABS = [
-  { id: "live",     label: "🔴 Live" },
-  { id: "upcoming", label: "⏰ Upcoming" },
-  { id: "finished", label: "✅ Finished" },
-  { id: "all",      label: "All" },
-];
+const STATUS_LABEL = {
+  scheduled: "Upcoming",
+  live:      "LIVE",
+  finished:  "Full Time",
+  postponed: "Postponed",
+};
 
-export default function Fixtures() {
-  const { user } = useAuth();
-  const [fixtures, setFixtures]     = useState([]);
-  const [favourites, setFavourites] = useState(null);
-  const [predictions, setPredictions] = useState({});
-  const [tab, setTab]   = useState("upcoming");
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState("");
-  const [lastSync, setLastSync] = useState(null);
+function useCountdown(kickoffAt) {
+  const [display, setDisplay] = useState("");
 
-  // ── Load everything ──────────────────────────────────────────────────────
-  const load = useCallback(async () => {
-    try {
-      const [{ data: fx, error: fxErr }, { data: fav }, { data: preds }] =
-        await Promise.all([
-          supabase
-            .from("fixtures")
-            .select(`
-              id, round, group_label, kickoff_at, venue,
-              status, home_score, away_score, went_to_penalties,
-              home_team:home_team_id(id, name, fifa_code, flag_emoji),
-              away_team:away_team_id(id, name, fifa_code, flag_emoji)
-            `)
-            .order("kickoff_at", { ascending: true }),
-          supabase
-            .from("user_favourite_teams")
-            .select("*")
-            .eq("user_id", user.id)
-            .maybeSingle(),
-          supabase
-            .from("predictions")
-            .select("*")
-            .eq("user_id", user.id),
-        ]);
-
-      if (fxErr) throw fxErr;
-      setFixtures(fx ?? []);
-      setFavourites(fav ?? null);
-      const map = {};
-      for (const p of preds ?? []) map[p.fixture_id] = p;
-      setPredictions(map);
-      setLastSync(new Date());
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [user.id]);
-
-  // ── Supabase Realtime: fixture score changes ─────────────────────────────
   useEffect(() => {
-    load();
+    function tick() {
+      const diff = new Date(kickoffAt).getTime() - Date.now();
+      if (diff <= 0) { setDisplay(""); return; }
+      const h = Math.floor(diff / 3_600_000);
+      const m = Math.floor((diff % 3_600_000) / 60_000);
+      const s = Math.floor((diff % 60_000) / 1_000);
+      if (h > 0) setDisplay(`${h}h ${m}m`);
+      else if (m > 0) setDisplay(`${m}m ${s}s`);
+      else setDisplay(`${s}s`);
+    }
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [kickoffAt]);
 
-    // Subscribe to fixture changes (scores, status) — updates all browsers instantly
-    const fixtureSub = supabase
-      .channel("fixtures-live")
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "fixtures" },
-        (payload) => {
-          setFixtures((prev) =>
-            prev.map((f) =>
-              f.id === payload.new.id
-                ? {
-                    ...f,
-                    status:            payload.new.status,
-                    home_score:        payload.new.home_score,
-                    away_score:        payload.new.away_score,
-                    went_to_penalties: payload.new.went_to_penalties,
-                    group_label:       payload.new.group_label,
-                  }
-                : f
-            )
-          );
-          setLastSync(new Date());
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "fixtures" },
-        () => load() // new fixture added → reload everything
-      )
-      .subscribe();
+  return display;
+}
 
-    // Subscribe to own prediction changes
-    const predSub = supabase
-      .channel("predictions-mine")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "predictions",
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          if (payload.eventType === "DELETE") {
-            setPredictions((prev) => {
-              const next = { ...prev };
-              delete next[payload.old.fixture_id];
-              return next;
-            });
-          } else {
-            setPredictions((prev) => ({
-              ...prev,
-              [payload.new.fixture_id]: payload.new,
-            }));
-          }
-        }
-      )
-      .subscribe();
+/**
+ * Props
+ * fixture     — full fixture row with home_team / away_team joined
+ * favourites  — { team_a_id, team_b_id } | null
+ * prediction  — prediction row for this user+fixture | null
+ * onPredict   — async (fixtureId, homeScore, awayScore, outcome) => void
+ */
+export default function FixtureCard({ fixture, favourites, prediction, onPredict }) {
+  const [saving, setSaving]     = useState(false);
+  const [localErr, setLocalErr] = useState("");
+  const countdown               = useCountdown(fixture.kickoff_at);
 
-    return () => {
-      supabase.removeChannel(fixtureSub);
-      supabase.removeChannel(predSub);
-    };
-  }, [load, user.id]);
+  // Local state variables for score input values
+  const [homeInput, setHomeInput] = useState("");
+  const [awayInput, setAwayInput] = useState("");
 
-  // ── Predict (UPDATED FOR EXACT SCORE CONFIGURATION) ──────────────────────
-  async function handlePredict(fixtureId, homeScore, awayScore, outcome) {
-    const { data, error: upsertErr } = await supabase
-      .from("predictions")
-      .upsert(
-        { 
-          user_id: user.id, 
-          fixture_id: fixtureId, 
-          predicted_home_score: homeScore, 
-          predicted_away_score: awayScore, 
-          predicted_outcome: outcome 
-        },
-        { onConflict: "user_id,fixture_id" }
-      )
-      .select()
-      .single();
+  // Keep local inputs synchronized when prediction values load from database asynchronously
+  useEffect(() => {
+    if (prediction) {
+      setHomeInput(prediction.predicted_home_score ?? "");
+      setAwayInput(prediction.predicted_away_score ?? "");
+    } else {
+      setHomeInput("");
+      setAwayInput("");
+    }
+  }, [prediction]);
 
-    if (upsertErr) throw upsertErr;
-    setPredictions((prev) => ({ ...prev, [fixtureId]: data }));
+  const kickoff  = new Date(fixture.kickoff_at);
+  const isLocked = kickoff.getTime() <= Date.now() || fixture.status !== "scheduled";
+  const isLive   = fixture.status === "live";
+  const isDone   = fixture.status === "finished";
+
+  // Which (if any) of the user's favourites is playing in this match?
+  const favHomeId = useMemo(() => {
+    if (!favourites) return false;
+    return (
+      fixture.home_team.id === favourites.team_a_id ||
+      fixture.home_team.id === favourites.team_b_id
+    );
+  }, [favourites, fixture.home_team.id]);
+
+  const favAwayId = useMemo(() => {
+    if (!favourites) return false;
+    return (
+      fixture.away_team.id === favourites.team_a_id ||
+      fixture.away_team.id === favourites.team_b_id
+    );
+  }, [favourites, fixture.away_team.id]);
+
+  const favTeamInMatch = favHomeId || favAwayId;
+
+  // The outcome string the favourite forces (home_win or away_win)
+  const forcedFavOutcome = favHomeId ? "home_win" : favAwayId ? "away_win" : null;
+
+  async function handleSavePrediction() {
+    setLocalErr("");
+
+    // Validate inputs aren't blank strings
+    if (homeInput === "" || awayInput === "") {
+      setLocalErr("Please enter goals for both teams.");
+      return;
+    }
+
+    const hScore = parseInt(homeInput, 10);
+    const aScore = parseInt(awayInput, 10);
+
+    // Validate input numeric formats
+    if (isNaN(hScore) || isNaN(aScore) || hScore < 0 || aScore < 0) {
+      setLocalErr("Scores must be valid positive whole numbers.");
+      return;
+    }
+
+    // Automatically derive the text outcome identifier for business logic consistency
+    let outcome = "draw";
+    if (hScore > aScore) outcome = "home_win";
+    if (aScore > hScore) outcome = "away_win";
+
+    // Client-side guard checking favorite team rules
+    if (forcedFavOutcome && outcome !== "draw" && outcome !== forcedFavOutcome) {
+      setLocalErr("Your favourite is playing — back them or predict a draw.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // Sends the numeric values and structural outcome up to the main view file to submit to Supabase
+      await onPredict(fixture.id, hScore, aScore, outcome);
+    } catch (err) {
+      setLocalErr(err.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
-  // ── Filtering ────────────────────────────────────────────────────────────
-  const liveCount = fixtures.filter((f) => f.status === "live").length;
-
-  const filtered = fixtures.filter((f) => {
-    if (tab === "live")     return f.status === "live";
-    if (tab === "upcoming") return f.status === "scheduled";
-    if (tab === "finished") return f.status === "finished";
-    return true;
-  });
-
-  // Group by round/matchday for the upcoming + all tabs
-  const grouped = {};
-  for (const f of filtered) {
-    const key = f.group_label
-      ? `${f.group_label} — ${f.round}`
-      : (f.round ?? "Other");
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(f);
-  }
+  const pts   = prediction?.points_awarded;
+  const bonus = prediction?.goals_bonus ?? 0;
 
   return (
-    <div className="page">
-      <div className="flex-between page-header">
-        <div>
-          <h1>Fixtures</h1>
-          <p>Predict exact scores before kickoff · Locks automatically · Live values update instantly</p>
-        </div>
-        {lastSync && (
-          <div className="muted" style={{ fontSize: "0.75rem", textAlign: "right" }}>
-            Last updated<br />
-            {lastSync.toLocaleTimeString()}
-          </div>
-        )}
+    <div className={`card fixture-card ${isLive ? "live-glow" : ""}`}>
+
+      {/* Status badge + round label */}
+      <div className="fixture-meta">
+        <span className="muted" style={{ fontSize: "0.75rem" }}>{fixture.round}</span>
+        <span className={`badge ${fixture.status}`}>{STATUS_LABEL[fixture.status]}</span>
       </div>
 
-      {!favourites && (
-        <div className="info-banner">
-          ⭐ You haven't picked your 2 favourite teams yet.{" "}
-          <a href="/my-team">Pick them now</a> — when your favourite plays, the
-          prediction locks to them automatically and earns more points.
+      {/* Teams + score */}
+      <div className="fixture-teams">
+        <div className="fixture-team">
+          <span className="flag">{fixture.home_team.flag_emoji}</span>
+          <span className="name">{fixture.home_team.name}</span>
+          {favHomeId && (
+            <span style={{ fontSize: "0.65rem", color: "var(--gold)" }}>
+              ★ Fav {fixture.home_team.id === favourites?.team_a_id ? "#1" : "#2"}
+            </span>
+          )}
+        </div>
+
+        <div style={{ textAlign: "center", minWidth: 60 }}>
+          {(isLive || isDone) && fixture.home_score != null ? (
+            <>
+              <div className="fixture-score">
+                {fixture.home_score} – {fixture.away_score}
+              </div>
+              {fixture.went_to_penalties && (
+                <div className="muted" style={{ fontSize: "0.62rem" }}>
+                  (after pens — not counted)
+                </div>
+              )}
+            </>
+          ) : (
+            <span className="fixture-vs">VS</span>
+          )}
+        </div>
+
+        <div className="fixture-team">
+          <span className="flag">{fixture.away_team.flag_emoji}</span>
+          <span className="name">{fixture.away_team.name}</span>
+          {favAwayId && (
+            <span style={{ fontSize: "0.65rem", color: "var(--gold)" }}>
+              ★ Fav {fixture.away_team.id === favourites?.team_a_id ? "#1" : "#2"}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Kickoff time / countdown */}
+      <div className="muted" style={{ fontSize: "0.75rem", textAlign: "center", marginBottom: "8px" }}>
+        {isLive ? (
+          <span style={{ color: "var(--red)", fontWeight: 700 }}>● Match in progress</span>
+        ) : isDone ? (
+          kickoff.toLocaleDateString(undefined, { day: "numeric", month: "short" })
+        ) : countdown ? (
+          <>
+            {kickoff.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+            <span style={{ marginLeft: 6, color: "var(--gold)", fontWeight: 600 }}>
+              ({countdown})
+            </span>
+          </>
+        ) : (
+          kickoff.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+        )}
+        {fixture.venue ? ` · ${fixture.venue}` : ""}
+      </div>
+
+      {/* Favourite-lock hint */}
+      {favTeamInMatch && !isLocked && (
+        <div style={{
+          fontSize: "0.72rem", color: "var(--gold)", textAlign: "center",
+          padding: "4px 8px", background: "rgba(232,185,74,0.08)",
+          borderRadius: 6, margin: "0 0 8px",
+        }}>
+          ⭐ Back your favourite or pick a draw
         </div>
       )}
 
-      {error && <div className="error-banner">{error}</div>}
+      {localErr && (
+        <div className="error-banner" style={{ margin: "4px 0", fontSize: "0.8rem" }}>
+          {localErr}
+        </div>
+      )}
 
-      <div className="tabs">
-        {TABS.map((t) => (
+      {/* SCORE PREDICTION FIELDS INPUT WORKFLOW */}
+      {!isLocked ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "12px" }}>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "14px" }}>
+            
+            {/* Home Score Input */}
+            <div style={{ textAlign: "center" }}>
+              <input
+                type="number"
+                min="0"
+                placeholder="0"
+                value={homeInput}
+                disabled={saving}
+                onChange={(e) => setHomeInput(e.target.value)}
+                style={{
+                  width: "60px",
+                  padding: "8px",
+                  fontSize: "1.25rem",
+                  fontWeight: "bold",
+                  textAlign: "center",
+                  borderRadius: "6px",
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)"
+                }}
+              />
+            </div>
+
+            <span style={{ fontSize: "1.2rem", fontWeight: "bold", color: "var(--text-dim)" }}>–</span>
+
+            {/* Away Score Input */}
+            <div style={{ textAlign: "center" }}>
+              <input
+                type="number"
+                min="0"
+                placeholder="0"
+                value={awayInput}
+                disabled={saving}
+                onChange={(e) => setAwayInput(e.target.value)}
+                style={{
+                  width: "60px",
+                  padding: "8px",
+                  fontSize: "1.25rem",
+                  fontWeight: "bold",
+                  textAlign: "center",
+                  borderRadius: "6px",
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)"
+                }}
+              />
+            </div>
+
+          </div>
+
           <button
-            key={t.id}
-            className={tab === t.id ? "active" : ""}
-            onClick={() => setTab(t.id)}
+            className="btn small"
+            disabled={saving}
+            onClick={handleSavePrediction}
+            style={{ width: "100%", cursor: "pointer" }}
           >
-            {t.label}
-            {t.id === "live" && liveCount > 0 && (
-              <span style={{
-                marginLeft: 6, background: "var(--red)", color: "#fff",
-                borderRadius: "999px", fontSize: "0.65rem", padding: "1px 6px",
-              }}>
-                {liveCount}
-              </span>
-            )}
+            {saving ? "Saving..." : "Lock Prediction"}
           </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div className="muted center" style={{ padding: 40 }}>Loading fixtures…</div>
-      ) : filtered.length === 0 ? (
-        <div className="card center muted" style={{ padding: 40 }}>
-          {tab === "live"
-            ? "No live matches right now. Check back at kickoff."
-            : tab === "upcoming"
-            ? "No upcoming fixtures yet. Admin will add them shortly."
-            : "No finished matches yet."}
         </div>
       ) : (
-        Object.entries(grouped).map(([groupKey, groupFixtures]) => (
-          <div key={groupKey} style={{ marginBottom: 32 }}>
-            <h3 style={{ color: "var(--gold)", marginBottom: 12, fontSize: "1rem" }}>
-              {groupKey}
-            </h3>
-            <div className="grid grid-3">
-              {groupFixtures.map((f) => (
-                <FixtureCard
-                  key={f.id}
-                  fixture={f}
-                  favourites={favourites}
-                  prediction={predictions[f.id]}
-                  onPredict={handlePredict}
-                />
-              ))}
-            </div>
+        /* If match is locked and user has a recorded prediction, display what they predicted */
+        prediction && (
+          <div className="center" style={{ 
+            fontSize: "0.88rem", 
+            marginTop: "10px", 
+            padding: "8px", 
+            background: "rgba(255,255,255,0.03)", 
+            borderRadius: "6px",
+            border: "1px dashed var(--border)"
+          }}>
+            <span className="muted">Your Prediction:</span>{" "}
+            <strong style={{ color: "var(--gold)", fontSize: "1rem", marginLeft: "4px" }}>
+              {prediction.predicted_home_score} – {prediction.predicted_away_score}
+            </strong>
           </div>
-        ))
+        )
+      )}
+
+      {/* After kickoff lock notice if user missed predicting */}
+      {isLocked && !prediction && !isDone && (
+        <div className="muted center" style={{ fontSize: "0.75rem", marginTop: "10px" }}>
+          Predictions closed
+        </div>
+      )}
+
+      {/* Points result display */}
+      {pts != null && (
+        <div className="center" style={{ marginTop: 8 }}>
+          <span className={`points-pill ${pts > 0 ? "positive" : "zero"}`}>
+            {pts > 0 ? `+${pts} pts` : "0 pts"}
+            {bonus > 0 ? ` (${bonus} goal bonus)` : ""}
+          </span>
+        </div>
       )}
     </div>
   );
