@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { teamShortLabel } from "../lib/teamDisplay";
 
 const STATUS_OPTIONS = ["scheduled","live","finished","postponed"];
 
@@ -312,7 +311,7 @@ function FixtureRow({ fixture, onSave }) {
   return (
     <tr style={dirty ? { background: "rgba(232,185,74,0.06)" } : {}}>
       <td style={{ fontWeight: 600 }}>
-        {teamShortLabel(fixture.home_team)} vs {teamShortLabel(fixture.away_team)}
+        {fixture.home_team.fifa_code} vs {fixture.away_team.fifa_code}
       </td>
       <td className="muted" style={{ fontSize: "0.78rem" }}>
         {fixture.group_label ? `${fixture.group_label} · ` : ""}{fixture.round}
