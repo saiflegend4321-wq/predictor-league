@@ -115,9 +115,16 @@ async function syncFromOpenfootball() {
   // 1. Fetch from GitHub
   let data;
   try {
-    const res = await fetch(OPENFOOTBALL_URL);
+    const res = await fetch(OPENFOOTBALL_URL, {
+      headers: { "User-Agent": "fifa-fantasy-predictor/1.0" },
+    });
     if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
-    data = await res.json();
+    const text = await res.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { error: `Invalid JSON from GitHub (first 120 chars): ${text.slice(0, 120)}` };
+    }
   } catch (err) {
     return { error: `Fetch failed: ${err.message}` };
   }
