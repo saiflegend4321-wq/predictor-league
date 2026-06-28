@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { teamShortLabel } from "../lib/teamDisplay";
 
 const STATUS_LABEL = {
   scheduled: "Upcoming",
@@ -187,9 +188,9 @@ export default function FixtureCard({ fixture, favourites, prediction, onPredict
       {/* Pick buttons */}
       <div className="pick-row">
         {[
-          { outcome: "home_win", label: `${fixture.home_team.fifa_code} Win`, fav: favHomeId },
-          { outcome: "draw",     label: "Draw",                               fav: false     },
-          { outcome: "away_win", label: `${fixture.away_team.fifa_code} Win`, fav: favAwayId },
+          { outcome: "home_win", label: `${teamShortLabel(fixture.home_team)} Win`, fav: favHomeId },
+          { outcome: "draw",     label: "Draw",                                          fav: false     },
+          { outcome: "away_win", label: `${teamShortLabel(fixture.away_team)} Win`, fav: favAwayId },
         ].map(({ outcome, label, fav }) => (
           <button
             key={outcome}
