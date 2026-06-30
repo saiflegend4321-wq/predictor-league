@@ -1,51 +1,128 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
+import Skeleton from "../components/Skeleton";
 
 const MEDALS = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
 export default function Leaderboard() {
   const { user } = useAuth();
-  const [rows, setRows]         = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState("");
-  const [lastSync, setLastSync] = useState(null);
+
+  // ── Login gate ────────────────────────────────────────────────────────────
+  if (!user) {
+    return (
+      <div className="page">
+        <div className="card" style={{ maxWidth: 480, margin: "60px auto", textAlign: "center", padding: "40px 32px" }}>
+          <div style={{ fontSize: "3rem", marginBottom: 12 }}>🏆</div>
+          <h2 style={{ marginTop: 0 }}>Sign in to see the Leaderboard</h2>
+          <p className="muted">
+            The leaderboard is only visible to registered managers.
+            Sign up free — it only takes 30 seconds.
+          </p>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 20 }}>
+            <Link className="btn" to="/auth">Sign in / Register</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <LeaderboardInner />;
+}
+
+// ── Inner component (only renders when logged in) ─────────────────────────────
+function LeaderboardInner() {
+  const { user } = useAuth();
+
+  const [activeTab,  setActiveTab]  = useState("global");
+  const [myLeagues,  setMyLeagues]  = useState([]);
+  const [rows,       setRows]       = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState("");
+  const [lastSync,   setLastSync]   = useState(null);
+  const [rowDeltas,  setRowDeltas]  = useState({}); // user_id -> 'up' | 'down' | 'same'
+  const [flashIds,   setFlashIds]   = useState({});  // user_id -> 'up' | 'down', cleared after animation
+
+  const prevRanksRef = useRef({}); // user_id -> previous rank
+
+  // Load user's leagues for tab list
+  useEffect(() => {
+    supabase
+      .from("league_members")
+      .select("league:league_id(id, name)")
+      .eq("user_id", user.id)
+      .then(({ data }) => setMyLeagues((data ?? []).map((r) => r.league)));
+  }, [user.id]);
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
-      const { data, error: rpcErr } = await supabase.rpc("get_leaderboard");
+      let data, rpcErr;
+      if (activeTab === "global") {
+        ({ data, error: rpcErr } = await supabase.rpc("get_leaderboard"));
+      } else {
+        ({ data, error: rpcErr } = await supabase.rpc("get_league_leaderboard", {
+          p_league_id: activeTab,
+        }));
+      }
       if (rpcErr) throw rpcErr;
-      setRows(data ?? []);
+      const newRows = data ?? [];
+
+      // Compute rank deltas vs previous snapshot
+      const deltas = {};
+      const flashes = {};
+      for (const r of newRows) {
+        const prevRank = prevRanksRef.current[r.user_id];
+        if (prevRank == null) {
+          deltas[r.user_id] = "same";
+        } else if (r.rank < prevRank) {
+          deltas[r.user_id] = "up";
+          flashes[r.user_id] = "up";
+        } else if (r.rank > prevRank) {
+          deltas[r.user_id] = "down";
+          flashes[r.user_id] = "down";
+        } else {
+          deltas[r.user_id] = "same";
+        }
+      }
+      prevRanksRef.current = Object.fromEntries(newRows.map((r) => [r.user_id, r.rank]));
+
+      setRows(newRows);
+      setRowDeltas(deltas);
+      setFlashIds(flashes);
       setLastSync(new Date());
+
+      // Clear flash classes after animation completes
+      if (Object.keys(flashes).length > 0) {
+        setTimeout(() => setFlashIds({}), 1700);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeTab]);
 
+  useEffect(() => { load(); }, [load]);
+
+  // Realtime refresh on prediction updates
   useEffect(() => {
-    load();
-
-    // Re-fetch leaderboard whenever any prediction is scored (points_awarded changes)
     const sub = supabase
       .channel("leaderboard-refresh")
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "predictions" },
-        () => load()
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "predictions" },
-        () => load()
-      )
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "predictions" }, load)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "predictions" }, load)
       .subscribe();
-
     return () => supabase.removeChannel(sub);
   }, [load]);
 
   const myRank = rows.find((r) => r.user_id === user?.id)?.rank;
+
+  const tabs = [
+    { id: "global", label: "🌍 Global" },
+    ...myLeagues.map((l) => ({ id: l.id, label: `🏆 ${l.name}` })),
+  ];
 
   return (
     <div className="page">
@@ -70,12 +147,37 @@ export default function Leaderboard() {
 
       {error && <div className="error-banner">{error}</div>}
 
+      {/* Tabs: Global + each league */}
+      <div className="tabs" style={{ marginBottom: 16 }}>
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            className={activeTab === t.id ? "active" : ""}
+            onClick={() => setActiveTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+        <Link
+          to="/leagues"
+          style={{
+            padding: "8px 16px", borderRadius: "999px", border: "1px dashed var(--border)",
+            color: "var(--text-dim)", fontSize: "0.85rem", fontWeight: 600,
+            display: "inline-flex", alignItems: "center", gap: 4,
+          }}
+        >
+          + My Leagues
+        </Link>
+      </div>
+
       <div className="card">
         {loading ? (
-          <div className="muted center" style={{ padding: 40 }}>Loading standings…</div>
+          <Skeleton.Row count={8} />
         ) : rows.length === 0 ? (
           <div className="muted center" style={{ padding: 40 }}>
-            No managers yet — be the first to make a prediction!
+            {activeTab === "global"
+              ? "No managers yet — be the first to make a prediction!"
+              : "No members in this league yet. Share your invite code!"}
           </div>
         ) : (
           <table>
@@ -92,14 +194,23 @@ export default function Leaderboard() {
             <tbody>
               {rows.map((r) => {
                 const isMe = r.user_id === user?.id;
+                const delta = rowDeltas[r.user_id];
+                const flash = flashIds[r.user_id];
                 return (
                   <tr
                     key={r.user_id}
-                    className={`leaderboard-row ${r.rank <= 3 ? `rank-${r.rank}` : ""}`}
+                    className={[
+                      "leaderboard-row",
+                      r.rank <= 3 ? `rank-${r.rank}` : "",
+                      flash === "up" ? "flash-up" : "",
+                      flash === "down" ? "flash-down" : "",
+                    ].join(" ")}
                     style={isMe ? { outline: "1px solid var(--gold)", outlineOffset: -1 } : {}}
                   >
                     <td style={{ textAlign: "center", fontSize: "1.1rem" }}>
                       {MEDALS[r.rank] ?? `#${r.rank}`}
+                      {delta === "up" && <span className="rank-delta up">▲</span>}
+                      {delta === "down" && <span className="rank-delta down">▼</span>}
                     </td>
                     <td>
                       <strong>{r.display_name}</strong>

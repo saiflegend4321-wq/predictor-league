@@ -318,3 +318,215 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   .fixture-team .name { font-size: 0.78rem; }
   .grid-3 { grid-template-columns: 1fr; }
 }
+
+/* =============================================================================
+   INTERACTIVE UPGRADE PASS
+   Signature additions: count-up stats, magnetic pick buttons, score reveal,
+   rank-change indicators, confetti burst, skeleton loaders.
+   ============================================================================= */
+
+/* ── Magnetic pick buttons — the core interaction, deserves the most polish ── */
+.pick-btn {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+              border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+.pick-btn:not(:disabled):hover {
+  transform: translateY(-2px) scale(1.025);
+  border-color: var(--gold);
+  box-shadow: 0 4px 16px rgba(232, 185, 74, 0.18);
+}
+.pick-btn:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+}
+.pick-btn.selected {
+  animation: pick-confirm 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes pick-confirm {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+.pick-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(232,185,74,0.35), transparent 70%);
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  pointer-events: none;
+}
+.pick-btn.selected::after {
+  animation: pick-ripple 0.5s ease-out;
+}
+@keyframes pick-ripple {
+  0%   { opacity: 0.6; transform: scale(0.3); }
+  100% { opacity: 0;   transform: scale(1.8); }
+}
+
+/* ── Count-up stat values (JS adds .counting class, swaps text via rAF) ──── */
+.stat-card .value {
+  transition: color 0.3s ease;
+  font-variant-numeric: tabular-nums;
+}
+.stat-card.counting .value {
+  color: var(--gold);
+}
+
+/* ── Score reveal — flip-in animation when a fixture's score appears ─────── */
+@keyframes score-flip-in {
+  0%   { opacity: 0; transform: rotateX(-90deg) translateY(-6px); }
+  60%  { opacity: 1; transform: rotateX(10deg); }
+  100% { opacity: 1; transform: rotateX(0deg); }
+}
+.fixture-score.reveal {
+  animation: score-flip-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: center top;
+  display: inline-block;
+}
+
+/* ── Leaderboard rank-change indicators ───────────────────────────────────── */
+.rank-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  vertical-align: middle;
+}
+.rank-delta.up   { color: var(--green); background: rgba(47,174,107,0.14); }
+.rank-delta.down { color: var(--red);   background: rgba(239,87,87,0.12); }
+.rank-delta.same { color: var(--text-dim); background: rgba(147,163,196,0.1); }
+
+.leaderboard-row {
+  transition: background 0.3s ease;
+}
+.leaderboard-row.flash-up {
+  animation: row-flash-green 1.6s ease;
+}
+.leaderboard-row.flash-down {
+  animation: row-flash-red 1.6s ease;
+}
+@keyframes row-flash-green {
+  0%   { background: rgba(47,174,107,0.22); }
+  100% { background: transparent; }
+}
+@keyframes row-flash-red {
+  0%   { background: rgba(239,87,87,0.18); }
+  100% { background: transparent; }
+}
+
+/* ── Confetti burst (canvas-free CSS particle approach) ───────────────────── */
+.confetti-burst {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  overflow: hidden;
+}
+.confetti-piece {
+  position: absolute;
+  top: -10px;
+  width: 8px;
+  height: 14px;
+  opacity: 0.95;
+  border-radius: 2px;
+  animation: confetti-fall linear forwards;
+}
+@keyframes confetti-fall {
+  0%   { transform: translateY(0) rotate(0deg);     opacity: 1; }
+  100% { transform: translateY(110vh) rotate(540deg); opacity: 0; }
+}
+
+/* ── Skeleton loading shimmer ──────────────────────────────────────────────── */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: 8px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(255,255,255,0.06) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+@keyframes skeleton-shimmer {
+  100% { transform: translateX(100%); }
+}
+.skeleton-card { height: 180px; margin-bottom: 16px; }
+.skeleton-line { height: 14px; margin-bottom: 8px; }
+.skeleton-line.short { width: 60%; }
+
+/* ── Tab switch underline animation ───────────────────────────────────────── */
+.tabs button {
+  position: relative;
+  transition: color 0.2s ease;
+}
+.tabs button.active {
+  animation: tab-pop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes tab-pop {
+  0%   { transform: scale(0.94); }
+  100% { transform: scale(1); }
+}
+
+/* ── Card hover lift (applies to interactive cards, not all cards) ───────── */
+.card.interactive {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  cursor: pointer;
+}
+.card.interactive:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+  border-color: rgba(232,185,74,0.35);
+}
+
+/* ── Button press feedback (global) ───────────────────────────────────────── */
+button.btn:not(:disabled):active,
+a.btn:not(:disabled):active {
+  transform: scale(0.97);
+}
+button.btn, a.btn {
+  transition: transform 0.12s ease, filter 0.15s ease;
+}
+
+/* ── Live badge pulse — sharper than before, draws the eye ──────────────── */
+.badge.live {
+  position: relative;
+}
+.badge.live::before {
+  content: "";
+  position: absolute;
+  left: -3px; top: 50%;
+  width: 5px; height: 5px;
+  background: var(--red);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  animation: live-dot-ping 1.4s ease-out infinite;
+}
+@keyframes live-dot-ping {
+  0%   { box-shadow: 0 0 0 0 rgba(239,87,87,0.6); }
+  100% { box-shadow: 0 0 0 8px rgba(239,87,87,0); }
+}
+
+/* ── Reduced motion support ───────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

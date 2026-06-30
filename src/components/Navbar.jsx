@@ -19,6 +19,7 @@ export default function Navbar() {
         <NavLink to="/rules">Rules</NavLink>
         <NavLink to="/fixtures">Fixtures</NavLink>
         <NavLink to="/leaderboard">Leaderboard</NavLink>
+        {user && <NavLink to="/leagues">Leagues</NavLink>}
         {user && <NavLink to="/my-team">My Team</NavLink>}
         {isAdmin && <NavLink to="/admin">Admin <span className="badge-admin">A</span></NavLink>}
         {user ? (

@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import FixtureCard from "../components/FixtureCard";
+import Skeleton from "../components/Skeleton";
 
 const TABS = [
   { id: "live",     label: "🔴 Live" },
@@ -20,7 +21,6 @@ export default function Fixtures() {
   const [error, setError]     = useState("");
   const [lastSync, setLastSync] = useState(null);
 
-  // ── Load everything ──────────────────────────────────────────────────────
   const load = useCallback(async () => {
     try {
       const [{ data: fx, error: fxErr }, { data: fav }, { data: preds }] =
@@ -59,11 +59,9 @@ export default function Fixtures() {
     }
   }, [user.id]);
 
-  // ── Supabase Realtime: fixture score changes ─────────────────────────────
   useEffect(() => {
     load();
 
-    // Subscribe to fixture changes (scores, status) — updates all browsers instantly
     const fixtureSub = supabase
       .channel("fixtures-live")
       .on(
@@ -90,11 +88,10 @@ export default function Fixtures() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "fixtures" },
-        () => load() // new fixture added → reload everything
+        () => load()
       )
       .subscribe();
 
-    // Subscribe to own prediction changes
     const predSub = supabase
       .channel("predictions-mine")
       .on(
@@ -128,7 +125,6 @@ export default function Fixtures() {
     };
   }, [load, user.id]);
 
-  // ── Predict ──────────────────────────────────────────────────────────────
   async function handlePredict(fixtureId, outcome) {
     const { data, error: upsertErr } = await supabase
       .from("predictions")
@@ -142,7 +138,6 @@ export default function Fixtures() {
     setPredictions((prev) => ({ ...prev, [fixtureId]: data }));
   }
 
-  // ── Filtering ────────────────────────────────────────────────────────────
   const liveCount = fixtures.filter((f) => f.status === "live").length;
 
   const filtered = fixtures.filter((f) => {
@@ -152,7 +147,6 @@ export default function Fixtures() {
     return true;
   });
 
-  // Group by round/matchday for the upcoming + all tabs
   const grouped = {};
   for (const f of filtered) {
     const key = f.group_label
@@ -177,7 +171,7 @@ export default function Fixtures() {
         )}
       </div>
 
-      {!favourites && (
+      {!favourites && !loading && (
         <div className="info-banner">
           ⭐ You haven't picked your 2 favourite teams yet.{" "}
           <a href="/my-team">Pick them now</a> — when your favourite plays, the
@@ -208,7 +202,9 @@ export default function Fixtures() {
       </div>
 
       {loading ? (
-        <div className="muted center" style={{ padding: 40 }}>Loading fixtures…</div>
+        <div className="grid grid-3">
+          {Array.from({ length: 6 }, (_, i) => <Skeleton.FixtureCard key={i} />)}
+        </div>
       ) : filtered.length === 0 ? (
         <div className="card center muted" style={{ padding: 40 }}>
           {tab === "live"

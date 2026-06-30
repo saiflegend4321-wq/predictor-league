@@ -8,6 +8,7 @@ import Auth from "./pages/Auth";
 import Fixtures from "./pages/Fixtures";
 import MyTeam from "./pages/MyTeam";
 import Leaderboard from "./pages/Leaderboard";
+import Leagues from "./pages/Leagues";
 import Admin from "./pages/Admin";
 
 export default function App() {
@@ -18,6 +19,8 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/rules" element={<Rules />} />
         <Route path="/auth" element={<Auth />} />
+
+        {/* Leaderboard requires login — handled inside the component */}
         <Route path="/leaderboard" element={<Leaderboard />} />
 
         <Route
@@ -33,6 +36,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <MyTeam />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/leagues"
+          element={
+            <ProtectedRoute>
+              <Leagues />
             </ProtectedRoute>
           }
         />

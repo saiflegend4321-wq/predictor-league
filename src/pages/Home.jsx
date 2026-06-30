@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { SCORING_RULES, PENALTY_RULE } from "../lib/scoringRules";
+import CountUp from "../components/CountUp";
 
 function useStats() {
   const [stats, setStats] = useState(null);
@@ -57,23 +58,32 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ── Live stats ticker ──────────────────────────────────────────── */}
-      {stats && (
+      {/* ── Live stats ticker — animated count-up ────────────────────── */}
+      {stats ? (
         <div className="grid grid-3" style={{ marginBottom: 32 }}>
-          <div className="card stat-card" style={{ textAlign: "center" }}>
+          <div className="card stat-card interactive" style={{ textAlign: "center" }}>
             <div className="label">Fixtures</div>
-            <div className="value">{stats.totalFixtures}</div>
+            <div className="value"><CountUp value={stats.totalFixtures} /></div>
           </div>
-          <div className="card stat-card" style={{ textAlign: "center" }}>
+          <div className="card stat-card interactive" style={{ textAlign: "center" }}>
             <div className="label">🔴 Live Now</div>
             <div className="value" style={{ color: stats.liveNow > 0 ? "var(--red)" : undefined }}>
-              {stats.liveNow}
+              <CountUp value={stats.liveNow} duration={500} />
             </div>
           </div>
-          <div className="card stat-card" style={{ textAlign: "center" }}>
+          <div className="card stat-card interactive" style={{ textAlign: "center" }}>
             <div className="label">Managers Signed Up</div>
-            <div className="value">{stats.managers}</div>
+            <div className="value"><CountUp value={stats.managers} /></div>
           </div>
+        </div>
+      ) : (
+        <div className="grid grid-3" style={{ marginBottom: 32 }}>
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="card stat-card">
+              <div className="skeleton skeleton-line short" style={{ height: 11, marginBottom: 10 }} />
+              <div className="skeleton skeleton-line" style={{ height: 28, width: "50%", margin: "0 auto" }} />
+            </div>
+          ))}
         </div>
       )}
 
@@ -96,7 +106,7 @@ export default function Home() {
             body: "Correct predictions earn 6 or 3 base points (depending on your favourite tier) plus 1 point for every goal your team scores.",
           },
         ].map(({ icon, title, body }) => (
-          <div key={title} className="card">
+          <div key={title} className="card interactive">
             <div style={{ fontSize: "2rem", marginBottom: 10 }}>{icon}</div>
             <h3 style={{ margin: "0 0 8px", fontSize: "1rem" }}>{title}</h3>
             <p className="muted" style={{ margin: 0, fontSize: "0.87rem", lineHeight: 1.55 }}>{body}</p>
