@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { teamShortLabel } from "../lib/teamDisplay";
+import ConfettiBurst from "./ConfettiBurst";
 
 const STATUS_LABEL = {
   scheduled: "Upcoming",
@@ -40,14 +41,36 @@ function useCountdown(kickoffAt) {
 export default function FixtureCard({ fixture, favourites, prediction, onPredict }) {
   const [saving, setSaving]     = useState(false);
   const [localErr, setLocalErr] = useState("");
+  const [showConfetti, setShowConfetti] = useState(false);
   const countdown               = useCountdown(fixture.kickoff_at);
+
+  // Track score reveal animation — only animate the first time a score appears
+  const [scoreRevealed, setScoreRevealed] = useState(false);
+  const prevHadScore = useRef(fixture.home_score != null);
+
+  useEffect(() => {
+    const hasScoreNow = fixture.home_score != null;
+    if (hasScoreNow && !prevHadScore.current) {
+      setScoreRevealed(true);
+    }
+    prevHadScore.current = hasScoreNow;
+  }, [fixture.home_score]);
+
+  // Fire confetti once when points_awarded transitions from null/0 to a positive value
+  const prevPts = useRef(prediction?.points_awarded);
+  useEffect(() => {
+    const pts = prediction?.points_awarded;
+    if (pts != null && pts > 0 && (prevPts.current == null || prevPts.current === 0)) {
+      setShowConfetti(true);
+    }
+    prevPts.current = pts;
+  }, [prediction?.points_awarded]);
 
   const kickoff  = new Date(fixture.kickoff_at);
   const isLocked = kickoff.getTime() <= Date.now() || fixture.status !== "scheduled";
   const isLive   = fixture.status === "live";
   const isDone   = fixture.status === "finished";
 
-  // Which (if any) of the user's favourites is playing in this match?
   const favHomeId = useMemo(() => {
     if (!favourites) return false;
     return (
@@ -65,14 +88,11 @@ export default function FixtureCard({ fixture, favourites, prediction, onPredict
   }, [favourites, fixture.away_team.id]);
 
   const favTeamInMatch = favHomeId || favAwayId;
-
-  // The outcome string the favourite forces (home_win or away_win)
   const forcedFavOutcome = favHomeId ? "home_win" : favAwayId ? "away_win" : null;
 
   async function handlePick(outcome) {
     setLocalErr("");
 
-    // Client-side guard mirroring the DB rule
     if (forcedFavOutcome && outcome !== "draw" && outcome !== forcedFavOutcome) {
       setLocalErr("Your favourite is playing — back them or predict a draw.");
       return;
@@ -92,24 +112,24 @@ export default function FixtureCard({ fixture, favourites, prediction, onPredict
   const pts    = prediction?.points_awarded;
   const bonus  = prediction?.goals_bonus ?? 0;
 
-  // Determine if a pick button should be disabled
   function btnDisabled(outcome) {
     if (isLocked || saving) return true;
-    if (!forcedFavOutcome) return false;          // free pick — all enabled
-    if (outcome === "draw") return false;          // draw always allowed
-    return outcome !== forcedFavOutcome;           // block picking against own fav
+    if (!forcedFavOutcome) return false;
+    if (outcome === "draw") return false;
+    return outcome !== forcedFavOutcome;
   }
 
   return (
     <div className={`card fixture-card ${isLive ? "live-glow" : ""}`}>
+      {showConfetti && (
+        <ConfettiBurst pieceCount={50} onDone={() => setShowConfetti(false)} />
+      )}
 
-      {/* Status badge + round label */}
       <div className="fixture-meta">
         <span className="muted" style={{ fontSize: "0.75rem" }}>{fixture.round}</span>
         <span className={`badge ${fixture.status}`}>{STATUS_LABEL[fixture.status]}</span>
       </div>
 
-      {/* Teams + score */}
       <div className="fixture-teams">
         <div className="fixture-team">
           <span className="flag">{fixture.home_team.flag_emoji}</span>
@@ -124,7 +144,7 @@ export default function FixtureCard({ fixture, favourites, prediction, onPredict
         <div style={{ textAlign: "center", minWidth: 60 }}>
           {(isLive || isDone) && fixture.home_score != null ? (
             <>
-              <div className="fixture-score">
+              <div className={`fixture-score ${scoreRevealed ? "reveal" : ""}`}>
                 {fixture.home_score} – {fixture.away_score}
               </div>
               {fixture.went_to_penalties && (
@@ -149,7 +169,6 @@ export default function FixtureCard({ fixture, favourites, prediction, onPredict
         </div>
       </div>
 
-      {/* Kickoff time / countdown */}
       <div className="muted" style={{ fontSize: "0.75rem", textAlign: "center" }}>
         {isLive ? (
           <span style={{ color: "var(--red)", fontWeight: 700 }}>● Match in progress</span>
@@ -168,7 +187,6 @@ export default function FixtureCard({ fixture, favourites, prediction, onPredict
         {fixture.venue ? ` · ${fixture.venue}` : ""}
       </div>
 
-      {/* Favourite-lock hint */}
       {favTeamInMatch && !isLocked && (
         <div style={{
           fontSize: "0.72rem", color: "var(--gold)", textAlign: "center",
@@ -185,7 +203,6 @@ export default function FixtureCard({ fixture, favourites, prediction, onPredict
         </div>
       )}
 
-      {/* Pick buttons */}
       <div className="pick-row">
         {[
           { outcome: "home_win", label: `${teamShortLabel(fixture.home_team)} Win`, fav: favHomeId },
@@ -208,14 +225,12 @@ export default function FixtureCard({ fixture, favourites, prediction, onPredict
         ))}
       </div>
 
-      {/* After kickoff lock notice */}
       {isLocked && !picked && !isDone && (
         <div className="muted center" style={{ fontSize: "0.75rem" }}>
           Predictions closed
         </div>
       )}
 
-      {/* Points result */}
       {pts != null && (
         <div className="center" style={{ marginTop: 4 }}>
           <span className={`points-pill ${pts > 0 ? "positive" : "zero"}`}>
